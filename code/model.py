@@ -75,6 +75,7 @@ class Attention(nn.Module):
 					  values shape : (batch_size,seq_len,hidden_size)
 	if needed we reshaped the query shape into (batch_size,1,hidden_size)
 	"""
+	
 	def __init__(self,attn_method,input_hidden_dim,output_hidden_dim):
 		super(Attention,self).__init__()
 		self.attn_method = attn_method
@@ -92,7 +93,7 @@ class Attention(nn.Module):
 
 	def general_attn(self,q,K,V,mask=None):
 		#format the query into (batch,1,query_dim) for simplifide 
-		#the caclcalation 
+		#the calculation
 		q.unsqueeze(1)
 		mask.unsqueeze(2)
 		projection = K.mm(self.attention_weight['general'])
@@ -182,12 +183,3 @@ class AttnEncoderDecoder(nn.Module):
 		# layer s
 	def load_model(self,path):
 		pass
-
-if __name__ == "__main__":
-	model = AttnEncoderDecoder(config)
-	print(list(model.parameters())[0].data)
-	p = list(model.parameters())[0].data
-	print(p[p > 0.1])
-	model.init_weights()
-	print(list(model.parameters())[0].data)
-	p = list(model.parameters())[0].data
