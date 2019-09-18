@@ -2,7 +2,9 @@ import random
 import difflib
 import logging
 from torch.utils.data import dataset
+import fairseq as fs
 logger = logging.getLogger(__name__)
+
 def read_token_lines_from_file(file):
     with open(file,'r',encoding='utf8') as f:
         lines = f.readlines()
@@ -68,3 +70,5 @@ class LanguageDataset(dataset.Dataset):
         return self.langs[index]
     def __len__(self):
         return len(self.langs)
+
+dictionary = fs.data.Dictionay()
