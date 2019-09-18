@@ -3,16 +3,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.nn.init as init
-import loggiing 
-
-logger = loggiing.getLogger(__name__)
+import logging 
+from functools import partial
+logger = logging.getLogger(__name__)
 
 config = {
 	'input_voc_size' : 100*1000,
 	'output_voc_size' : 50 * 1000,
-	'init_way' : 'uniform_init',
-	'uniform_num' : 0.1,
-	'attn_mothod' : 'general',
+	'init_method' : 'uniform',
+	'uniform_lower_bound' : -0.1,
+	'uniform_upper_bound' : 0.1,
+	'attn_method' : 'general',
 	'embedding_dim' : 500,
 	'encoder_hidden_dim' : 500,
 	'decoder_hidden_dim' : 500,
@@ -27,12 +28,19 @@ config = {
 	'optim_engine' : 'Adam',
 	'disfluente_candidate_size' : 10, 
 	'use_cuda' : True,
+	'dropout_prob' : 0.1,
+	'rnn_type' : 'gru',
+	'normal_mean' : 0,
+	'normal_std' : 1,
+	'xavier_normal_gain' : 1,
+	'xavier_uniform_gain' : 1,
 }
 device = torch.device('gpu') if torch.cuda.is_available() and config['use_cuda'] else torch.device('cpu')
 
 class Encoder(nn.Module):
-	def __init__(self,config):
 
+	def __init__(self,config):
+		super(Encoder,self).__init__()
 		self.__dict__.update(config)
 		self.embedding = nn.Embedding(self.input_voc_size, self.embedding_dim)
 		self.dropout = nn.Dropout(self.dropout_prob)
@@ -52,39 +60,34 @@ class Encoder(nn.Module):
 
 class Attention(nn.Module):
 
-		"""
-		the implementation  of three way attention in papers:
-		Effective Approaches to Attention-based Neural Machine Translation,
-		defaultly it is the global way cause the main paper (after mentioned) use it,
-		use example:
-		input include the output hidden of time t(decoder hidden), also called h_t,
-		(if we use the concat way,we also need the last time (t-1) decoder's input),
-		and all of the hidden of the encoder output,
-		for simplity,we uniformaly call the seperately query,key(s),value(s),which in here
-		the key(s) is identical the value(s)
-		the initial input query shape : (batch_size,hidden_size),
-						  keys shape : (batch_szie,seq_len,hidden_size),
-						  values shape : (batch_size,seq_len,hidden_size)
-		if needed we reshaped the query shape into (batch_size,1,hidden_size)
-		"""
-
-	def __init__(self,attn_mothod,input_hidden_dim,output_hidden_dim,config):
+	"""
+	the implementation  of three way attention in papers:
+	Effective Approaches to Attention-based Neural Machine Translation,
+	defaultly it is the global way cause the main paper (after mentioned) use it,
+	use example:
+	input include the output hidden of time t(decoder hidden), also called h_t,
+	(if we use the concat way,we also need the last time (t-1) decoder's input),
+	and all of the hidden of the encoder output,
+	for simplity,we uniformaly call the seperately query,key(s),value(s),which in here
+	the key(s) is identical the value(s)
+	the initial input query shape : (batch_size,hidden_size),
+					  keys shape : (batch_szie,seq_len,hidden_size),
+					  values shape : (batch_size,seq_len,hidden_size)
+	if needed we reshaped the query shape into (batch_size,1,hidden_size)
+	"""
+	def __init__(self,attn_method,input_hidden_dim,output_hidden_dim):
 		super(Attention,self).__init__()
 		self.attn_method = attn_method
 		if self.attn_method not in ['general','concat','dot']:
 			raise NameError('input the appropriate attention way')
 		self.query_dim = input_hidden_dim
 		self.key_dim = output_hidden_dim
-		self.use_mask = use_mask
-		self.attention_weight = nn.ParameterDict({'concat':ParameterList(
-														[nn.Parameter(torch.randn(self.query_dim)),
-														nn.Parameter(torch.randn(self.key_dim*2,self.query_dim))]),
-												  'general':nn.Parameter(torch.randn(self.key_dim,self.query_dim))})
-		self.atten_fn_map = {
-			'dot' : self.general_attn,
-			'general' : self.dot_attn,
-			'concat' : self.concat_attn,
-		}
+		self.attention_weight = nn.ParameterDict({'general':nn.Parameter(torch.randn(self.key_dim,self.query_dim))})
+		# self.atten_fn_map = {
+		# 	'dot' : self.general_attn,
+		# 	'general' : self.dot_attn,
+		# 	'concat' : self.concat_attn,
+		# }
 		self.softmax = nn.Softmax(dim=-1)
 
 	def general_attn(self,q,K,V,mask=None):
@@ -92,7 +95,7 @@ class Attention(nn.Module):
 		#the caclcalation 
 		q.unsqueeze(1)
 		mask.unsqueeze(2)
-		projection = self.attention_weight['general'].mm(K)
+		projection = K.mm(self.attention_weight['general'])
 		K,V = mask * K, mask * V
 		attn_socre = torch.bmm(q,projection.transpose(1,2))
 		attn_softmax_score = self.softmax(attn_socre)
@@ -118,19 +121,19 @@ class AttnEncoderDecoder(nn.Module):
 
 	def __init__(self,config):
 		super(AttnEncoderDecoder,self).__init__()
-		self.__dict__update(config)
-		self.embedding = nn.Embedding(self.output_voc_size, embedding_dim)
+		self.__dict__.update(config)
+		self.embedding = nn.Embedding(self.output_voc_size, self.embedding_dim)
 		self.dropout = nn.Dropout(self.dropout_prob)
 		self.encoder = Encoder(config)
 		self.rnn_type_map = {
-			'rnn': nn.RNN(),
-			'gru': nn.GRU(),
-			'lstm': nn.LSTM(),
+			'rnn': nn.RNN,
+			'gru': nn.GRU,
+			'lstm': nn.LSTM,
 		}
-		self.attn = Attention(self.attn_mothod, self.input_hidden_dim, self.output_hidden_dim)
+		self.attn = Attention(self.attn_method, self.encoder_hidden_dim, self.decoder_hidden_dim)
 		if self.rnn_type not in ['rnn','lstm','gru']:
 			raise NameError('input the appropriate rnn type')
-		self.decoder_rnn_layer = nn.GRU(self.decoder_embeded_dim,self.decoder_hidden_dim,
+		self.decoder_rnn_layer = nn.GRU(self.embedding_dim,self.decoder_hidden_dim,
 										self.decoder_rnn_layer_size,bidirectional=True)
 		self.concat_weight = nn.Linear(self.decoder_hidden_dim*2,self.decoder_hidden_dim)
 		self.output_project = nn.Linear(self.decoder_hidden_dim,self.output_voc_size)
@@ -161,7 +164,30 @@ class AttnEncoderDecoder(nn.Module):
 							self.decoder_hidden_dim,device=device)
 
 	def init_weights(self):
-		pass
+		#simple init method just init all parameters
+		#by the uniform way
+		init_method_map = {
+		'uniform' : partial(init.uniform_,a = self.uniform_lower_bound, b = self.uniform_upper_bound),
+		'normal' : partial(init.normal_, mean = self.normal_mean, std = self.normal_std),
+		'xavier_normal' : partial(init.xavier_normal_, gain = self.xavier_normal_gain),
+		'xavier_uniform' : partial(init.uniform_, gain = self.xavier_uniform_gain),
+		}
+		init_fn = init_method_map[self.init_method]
+		for p in model.parameters():
+			if p.data.dim() == 1 and 'normal' in self.init_method:
+				init.uniform_(p.data)
+			else:
+				init_fn(p.data)
+		# more concise init method should by
+		# layer s
 	def load_model(self,path):
 		pass
-	
+
+if __name__ == "__main__":
+	model = AttnEncoderDecoder(config)
+	print(list(model.parameters())[0].data)
+	p = list(model.parameters())[0].data
+	print(p[p > 0.1])
+	model.init_weights()
+	print(list(model.parameters())[0].data)
+	p = list(model.parameters())[0].data
