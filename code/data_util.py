@@ -46,6 +46,7 @@ def label_which_word_wrong(s1,s2):
                 label_list[i1:i2] = ['d'] * (i2 - i1)
                 word_compare_tuple_list += list(zip(s1[i1:i2],['[DELETE]']*(i2-i1)))
     return label_list,word_compare_tuple_list
+
 #raw sentence pair just source to target 
 def load_data_into_parallel(src_file,trg_file):
     #return format:
@@ -57,6 +58,7 @@ def load_data_into_parallel(src_file,trg_file):
 
 class LanguageDataset(dataset.Dataset):
     r"""
+    create this dataset for FairDataset used
     dataset for sequence to sequence,
     """
     def __init__(self,langs,token_method):
@@ -71,4 +73,55 @@ class LanguageDataset(dataset.Dataset):
     def __len__(self):
         return len(self.langs)
 
-dictionary = fs.data.Dictionay()
+class PaddedTensorLanguageDataset(dataset.Dataset):        
+    r"""create the indexed format for the retraing stage
+        return format: (padded_src_tensor,padded_trg_tensor,pad_mask)
+    """
+
+    def __init__(self,langs_pairs,reversed=False):
+        super(PaddedTensorLanguageDataset,self).__init__()
+        self.langs_paris = langs_pairs
+        self.src_langs,self.trg_langs = list(zip(*self.langs_pairs))
+        #cause the backboost tainning algorithm need this correted-to-error
+        # pair format,we need reverse the pairs 
+        if reversed:
+            self.src_langs,self.trg_langs = self.trg_langs,self.src_langs
+        self.dictionary = fs.data.Dictionay().load(config['word_dict'])
+        self.max_len = config['max_len']
+        self.pad_left = pad_left
+
+    def __getitem__(self,index):
+        src,trg = self.src_langs[index],self.trg_langs[index]
+        return self._pad_one_pair(src,trg)
+
+    def __len__(self):
+        return len(self.src_langs)
+
+    def is_pad_left(self):
+        return self.pad_left
+
+    def _pad_one_pair(self,src,trg):
+
+        src, trg = src.split(' '), trg.split(' ')
+        src_len, trg_len = len(src), len(trg)
+        src_need_padded_len = self.max_len - src_len - 1 
+        trg_need_padded_len = self.max_len - trg_len - 1
+        src_idxs = [self.dictionary.index(token) for token in src]
+        trg_idxs = [self.dictionary.index(token) for token in trg]
+        src_idxs = src_idxs + [self.dictionary.eos()]
+        trg_idxs = [self.dictionary.sos()] + trg_idxs
+        #source padded left condition 
+        if self.pad_left:
+            src_idxs = [self.dictionary.pad()] * src_need_padded_len + src_idxs
+            src_mask = [0] * src_need_padded_len + [1] * src_len
+        else:
+            src_idxs = src_idxs + [self.dictionary.pad()] * src_need_padded_len
+            src_mask = [1] * src_len + [0] * src_need_padded_len
+
+        trg_idxs = trg_idxs + [self.dictionary.pad()] * trg_need_padded_len
+        trg_mask = [1] * trg_len + [0] * trg_need_padded_len
+        src_idxs_tensor = torch.tensor(src_idxs,dtype=torch.long)
+        trg_idxs_tensor = torch.tensor(trg_idxs,dtypr=torch.long)
+        src_mask = torch.tensor(src_mask,dtype=torch.float32)
+        trg_mask = torch.tensor(trg_mask,dtype=torch.float32)
+        return (src_idx_tensor,trg_idxs_tensor,src_mask,trg_mask)

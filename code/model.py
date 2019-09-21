@@ -35,6 +35,7 @@ config = {
 	'xavier_normal_gain' : 1,
 	'xavier_uniform_gain' : 1,
 }
+
 device = torch.device('gpu') if torch.cuda.is_available() and config['use_cuda'] else torch.device('cpu')
 
 class Encoder(nn.Module):
@@ -75,7 +76,7 @@ class Attention(nn.Module):
 					  values shape : (batch_size,seq_len,hidden_size)
 	if needed we reshaped the query shape into (batch_size,1,hidden_size)
 	"""
-	
+
 	def __init__(self,attn_method,input_hidden_dim,output_hidden_dim):
 		super(Attention,self).__init__()
 		self.attn_method = attn_method
