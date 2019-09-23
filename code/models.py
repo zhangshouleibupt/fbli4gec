@@ -6,36 +6,6 @@ import torch.nn.init as init
 import logging 
 from functools import partial
 logger = logging.getLogger(__name__)
-
-config = {
-	'input_voc_size' : 100*1000,
-	'output_voc_size' : 50 * 1000,
-	'init_method' : 'uniform',
-	'uniform_lower_bound' : -0.1,
-	'uniform_upper_bound' : 0.1,
-	'attn_method' : 'general',
-	'embedding_dim' : 500,
-	'encoder_hidden_dim' : 500,
-	'decoder_hidden_dim' : 500,
-	'encoder_rnn_layer_size' : 2,
-	'decoder_rnn_layer_size' : 2,
-	'learing_rate' : 0.1 * 0.001,
-	'epochs' : 40, 
-	'batch_size' : 128, 
-	'dropput_prop' : 0.15, 
-	'use_batch_norm' : False, 
-	'use_seq_norm' : False, 
-	'optim_engine' : 'Adam',
-	'disfluente_candidate_size' : 10, 
-	'use_cuda' : True,
-	'dropout_prob' : 0.1,
-	'rnn_type' : 'gru',
-	'normal_mean' : 0,
-	'normal_std' : 1,
-	'xavier_normal_gain' : 1,
-	'xavier_uniform_gain' : 1,
-}
-
 device = torch.device('gpu') if torch.cuda.is_available() and config['use_cuda'] else torch.device('cpu')
 
 class Encoder(nn.Module):
@@ -141,7 +111,7 @@ class AttnEncoderDecoder(nn.Module):
 		self.output_project = nn.Linear(self.decoder_hidden_dim,self.output_voc_size)
 		self.softmax = nn.Softmax(dim=-1)
 
-	def forward(self,input_token,input_seqs,hidden,mask):
+	def forward(self,input_token,input_seqs,hidden,mask,first_step=False):
 		#input_token shape : (batch,) after embedding shape : (batch,embed_dim)
 		input_token_embeded = self.drpout(self.embedding(input_token))
 		#add one dimension into input_token and transpose in (0,1) dim 
@@ -149,7 +119,10 @@ class AttnEncoderDecoder(nn.Module):
 		input_token_embeded = input_token_embeded.unsqueeze(1).transpose(0,1)
 		#use the t time step hidden as query
 		encoder_seq_hiddens,h = self.encoder(input_seqs)
-		decoder_rnn_out,hidden = self.decoder_rnn_layer(input_token_embeded,hidden)
+		if first_step:
+			decoder_rnn_out,hidden = self.decoder_rnn_layer(input_token_embeded,h)
+		else:
+			decoder_rnn_out,hidden = self.decoder_rnn_layer(input_token_embeded,hidden)
 		#make the shape into (bathc_size,hidden_dim)
 		decoder_rnn_out = decoder_rnn_out[:,:,self.decoder_hidden_dim:].unsqueeze(1)
 		attn_out = self.attn(decoder_rnn_out,encoder_seq_hiddens,encoder_seq_hiddens,mask)
@@ -158,12 +131,10 @@ class AttnEncoderDecoder(nn.Module):
 		out = self.output_project(out)
 		out = self.softmax(out)
 		return out,hidden
-
 	def init_hidden(self):
-		num = 2 if self.use_bidirectional else 1
 		b = self.batch_size
-		return torch.zeros(num*self.decoder_rnn_layer_size,b,
-							self.decoder_hidden_dim,device=device)
+		num = 2 if self.user_birectional else 1 
+		return torch.zeros(num*self.encoder_rnn_layer_size,b,self.encoder_hidden_dim,device=device)
 
 	def init_weights(self):
 		#simple init method just init all parameters
@@ -183,4 +154,29 @@ class AttnEncoderDecoder(nn.Module):
 		# more concise init method should by
 		# layer s
 	def load_model(self,path):
+		pass
+
+#training on the native dataset...
+class RNNLMModel(nn.Module):
+	'''
+	rnn language model implement <<Recurrent neural network based language model>>
+
+	'''
+	def __init__(self,config):
+		super(RNNLMModel,self).__init__()
+		self.embedding_dim = config['lang_model_embed_dim']
+		self.hidden_dim = config['lang_model_hidden_dim']
+		self.voc_size = config['lang_model_voc_size']
+		self.embed_layer = nn.Embedding(self.voc_size,self.embedding_dim)
+		self.gru = nn.GRU(self.embedding_dim,self.hidden_dim,layer=2)
+		self.projection = nn.Linear(self.embedding_dim,self.voc_size)
+		self.softmax = nn.Softmax(dim=-1)
+
+	def forward(self,x,hidden):
+		x = self.embed_layer(x)
+		x,hidden = self.gru(x,hidden)
+		x = self.projection(x)
+		x = self.softmax(x)
+		return x,hidden
+	def get_score(self,x):
 		pass

@@ -77,7 +77,6 @@ class PaddedTensorLanguageDataset(dataset.Dataset):
     r"""create the indexed format for the retraing stage
         return format: (padded_src_tensor,padded_trg_tensor,pad_mask)
     """
-
     def __init__(self,langs_pairs,reversed=False):
         super(PaddedTensorLanguageDataset,self).__init__()
         self.langs_paris = langs_pairs
@@ -101,11 +100,15 @@ class PaddedTensorLanguageDataset(dataset.Dataset):
         return self.pad_left
 
     def _pad_one_pair(self,src,trg):
-
-        src, trg = src.split(' '), trg.split(' ')
-        src_len, trg_len = len(src), len(trg)
-        src_need_padded_len = self.max_len - src_len - 1 
-        trg_need_padded_len = self.max_len - trg_len - 1
+        if len(src_len) > self.max_len - 1:
+            src = src[:self.max_len - 1]
+        if len(trg_len) > self.max_len - 1:
+            trg = trg[:self.max_len - 1]
+        #cuase we add [bos] and [eos] seperately in source 
+        #and target,so the length needed to be add 1
+        src_len, trg_len = len(src) + 1, len(trg) + 1
+        src_need_padded_len = self.max_len - src_len
+        trg_need_padded_len = self.max_len - trg_len
         src_idxs = [self.dictionary.index(token) for token in src]
         trg_idxs = [self.dictionary.index(token) for token in trg]
         src_idxs = src_idxs + [self.dictionary.eos()]
