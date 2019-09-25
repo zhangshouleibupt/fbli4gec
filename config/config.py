@@ -25,5 +25,5 @@ config = {
 	'normal_std' : 1,
 	'xavier_normal_gain' : 1,
 	'xavier_uniform_gain' : 1,
-	
+	'word_dict' : '../dict/src.dict',
 }

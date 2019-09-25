@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-import fairseq as fs
 #ToDo lack of the shallow fusion
 from models import RNNLMModel
 from config import config
@@ -38,3 +37,45 @@ def beam_search(model,input_seqs,sos,beam_size=10):
 			all_condidate_seqs[i].append(index)
 	all_seqs = [torch.tensor(each_seq) for each_seq in all_condidate_seqs]
 	return all_seqs
+from torch.utils.data import Sampler
+
+class RandomSubsetSampler(Sampler):
+	def __init__(self,data_source,subset_size = 1.0):
+		super(Sampler,self).__init__()
+		self.data_source = data_source
+		self.subset_size = subset_size
+
+	@property
+	def num_samples(self):
+		subset_size = 1.0 if self.subset_size > 1.0 else self.subset_size
+		n_samples = int(len(self.data_source) * subset_size)
+		return n_samples
+
+	def __iter__(self):
+		n = self.num_samples
+		original_data_source_len = len(self.data_source)
+		original_indices = torch.randper(original_data_source_len).tolist()
+
+		return iter(original_indices[:n])
+	def __len__(self):
+		return self.num_samples
+
+class RandomIndicesSubsetSampler(Sampler):
+	
+	def __init__(self,indices,subset_size=1.0):
+		super(Sampler,self).__init__()
+		self.indices = indices
+		self.subset_size = subset_size
+	@property 
+	def num_samples(self):
+		subset_size = 1.0 if self.subset_size > 1.0 else self.subset_size
+		n_samples = int(len(self.indices) * subset_size)
+		return n_samples
+	def __iter__(self):
+		n = self.num_samples
+		original_data_source_len = len(self.data_source)
+		original_indices = torch.randper(original_data_source_len).tolist()
+		subset_indices = [self.indices[index] for index in original_indices]
+		return iter(subset_indices[:n])
+	def __len__(self):
+		return self.num_samples

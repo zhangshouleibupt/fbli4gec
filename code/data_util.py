@@ -2,9 +2,9 @@ import random
 import difflib
 import logging
 from torch.utils.data import dataset
-import fairseq as fs
+from dictionary import Dictionay
+from config import config
 logger = logging.getLogger(__name__)
-
 def read_token_lines_from_file(file):
     with open(file,'r',encoding='utf8') as f:
         lines = f.readlines()
@@ -56,23 +56,6 @@ def load_data_into_parallel(src_file,trg_file):
     assert len(src_lines) == len(trg_lines)
     return list(zip(src_lines,trg_lines))
 
-class LanguageDataset(dataset.Dataset):
-    r"""
-    create this dataset for FairDataset used
-    dataset for sequence to sequence,
-    """
-    def __init__(self,langs,token_method):
-        super(LanguageDataset,self).__init__()
-        self.lang_to_token_method_map = {
-            'BPE' : self.bpe_method,
-            'just_map' : self.just_mappping_method,
-        }
-        self.langs = langs
-    def __getitem__(self,index):
-        return self.langs[index]
-    def __len__(self):
-        return len(self.langs)
-
 class PaddedTensorLanguageDataset(dataset.Dataset):        
     r"""create the indexed format for the retraing stage
         return format: (padded_src_tensor,padded_trg_tensor,pad_mask)
@@ -85,7 +68,7 @@ class PaddedTensorLanguageDataset(dataset.Dataset):
         # pair format,we need reverse the pairs 
         if reversed:
             self.src_langs,self.trg_langs = self.trg_langs,self.src_langs
-        self.dictionary = fs.data.Dictionay().load(config['word_dict'])
+        self.dictionary = Dictionay().load(config['word_dict'])
         self.max_len = config['max_len']
         self.pad_left = pad_left
 
@@ -128,3 +111,55 @@ class PaddedTensorLanguageDataset(dataset.Dataset):
         src_mask = torch.tensor(src_mask,dtype=torch.float32)
         trg_mask = torch.tensor(trg_mask,dtype=torch.float32)
         return (src_idx_tensor,trg_idxs_tensor,src_mask,trg_mask)
+
+
+from torch.utils.data import Sampler
+
+class RandomSubsetSampler(Sampler):
+    def __init__(self,data_source,subset_size = 1.0):
+        super(Sampler,self).__init__()
+        self.data_source = data_source
+        self.subset_size = subset_size
+
+    @property
+    def num_samples(self):
+        subset_size = 1.0 if self.subset_size > 1.0 else self.subset_size
+        n_samples = int(len(self.data_source) * subset_size)
+        return n_samples
+
+    def __iter__(self):
+        n = self.num_samples
+        original_data_source_len = len(self.data_source)
+        original_indices = torch.randper(original_data_source_len).tolist()
+
+        return iter(original_indices[:n])
+    def __len__(self):
+        return self.num_samples
+
+class RandomIndicesSubsetSampler(Sampler):
+
+    def __init__(self,indices,subset_size=1.0):
+        super(Sampler,self).__init__()
+        self.indices = indices
+        self.subset_size = subset_size
+    @property 
+    def num_samples(self):
+        subset_size = 1.0 if self.subset_size > 1.0 else self.subset_size
+        n_samples = int(len(self.indices) * subset_size)
+        return n_samples
+    def __iter__(self):
+        n = self.num_samples
+        original_data_source_len = len(self.data_source)
+        original_indices = torch.randper(original_data_source_len).tolist()
+        subset_indices = [self.indices[index] for index in original_indices]
+        return iter(subset_indices[:n])
+    def __len__(self):
+        return self.num_samples
+
+def main():
+    src_file = '../data/'
+    src_trg_pair_langs = load_data_into_parallel(src_file, trg_file)
+    train_dataset = PaddedTensorLanguageDataset(src_trg_pair_langs)
+    
+if __name__ == "__main__":
+    main()
