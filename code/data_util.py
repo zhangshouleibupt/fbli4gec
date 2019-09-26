@@ -1,12 +1,11 @@
 import random
 import difflib
 import logging
-from torch.utils.data import dataset
-from fairseq.data import  Dictionary
 import torch
 import  sys
 import  os
-sys.path.append(os.path.join(os.path.abspath('..'),'config'))
+from torch.utils.data import dataset
+from fairseq.data import  Dictionary
 from config import Config
 logger = logging.getLogger(__name__)
 
@@ -172,6 +171,7 @@ def main():
     from torch.utils.data import DataLoader
     sampler = RandomSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset,sampler=sampler,batch_size=16)
-
+    reversed_train_dataset = PaddedTensorLanguageDataset(src_trg_pair_langs,reversed=True)
+    reversed_train_dataloader = DataLoader(reversed_train_dataset,sampler=sampler,batch_size=16)
 if __name__ == "__main__":
     main()

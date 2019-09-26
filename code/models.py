@@ -1,9 +1,9 @@
-import torch 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.nn.init as init
-import logging 
+import logging
 from functools import partial
 logger = logging.getLogger(__name__)
 device = torch.device('gpu') if torch.cuda.is_available() and config['use_cuda'] else torch.device('cpu')
@@ -26,7 +26,7 @@ class Encoder(nn.Module):
 		return seq_input[:,:,self.encoder_hidden_dim:].transpose(0,1),h_last.transpose(0,1)
 	def init_hidden(self):
 		b = self.batch_size
-		num = 2 if self.user_birectional else 1 
+		num = 2 if self.user_birectional else 1
 		return torch.zeros(num*self.encoder_rnn_layer_size,b,self.encoder_hidden_dim,device=device)
 
 class Attention(nn.Module):
@@ -63,7 +63,7 @@ class Attention(nn.Module):
 		self.softmax = nn.Softmax(dim=-1)
 
 	def general_attn(self,q,K,V,mask=None):
-		#format the query into (batch,1,query_dim) for simplifide 
+		#format the query into (batch,1,query_dim) for simplifide
 		#the calculation
 		q.unsqueeze(1)
 		mask.unsqueeze(2)
@@ -114,7 +114,7 @@ class AttnEncoderDecoder(nn.Module):
 	def forward(self,input_token,input_seqs,hidden,mask,first_step=False):
 		#input_token shape : (batch,) after embedding shape : (batch,embed_dim)
 		input_token_embeded = self.drpout(self.embedding(input_token))
-		#add one dimension into input_token and transpose in (0,1) dim 
+		#add one dimension into input_token and transpose in (0,1) dim
 		#for the format into the rnn input data format
 		input_token_embeded = input_token_embeded.unsqueeze(1).transpose(0,1)
 		#use the t time step hidden as query
@@ -133,7 +133,7 @@ class AttnEncoderDecoder(nn.Module):
 		return out,hidden
 	def init_hidden(self):
 		b = self.batch_size
-		num = 2 if self.user_birectional else 1 
+		num = 2 if self.user_birectional else 1
 		return torch.zeros(num*self.encoder_rnn_layer_size,b,self.encoder_hidden_dim,device=device)
 
 	def init_weights(self):
