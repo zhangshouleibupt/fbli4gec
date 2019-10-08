@@ -12,7 +12,7 @@ Config = {
 	'decoder_rnn_layer_size' : 2,
 	'learing_rate' : 0.1 * 0.001,
 	'epochs' : 40,
-	'batch_size' : 128,
+	'batch_size' : 16,
 	'dropput_prop' : 0.15,
 	'use_batch_norm' : False,
 	'use_seq_norm' : False,
@@ -28,4 +28,5 @@ Config = {
 	'word_dict' : '../dict/src.dict',
 	'max_len' : 128,
 	'pad_left' : True,
+	'use_bidirectional' : True,
 }
