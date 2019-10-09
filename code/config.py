@@ -29,4 +29,8 @@ Config = {
 	'max_len' : 128,
 	'pad_left' : True,
 	'use_bidirectional' : True,
+	'rnn_lang_model_layers' : 2,
+	'lang_model_embed_dim':500,
+	'lang_model_hidden_dim':500,
+	'lang_model_voc_size':50*1000,
 }

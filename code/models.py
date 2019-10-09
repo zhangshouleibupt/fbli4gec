@@ -131,29 +131,50 @@ class AttnEncoderDecoder(nn.Module):
                 init_fn(p.data)
 
 class RNNLMModel(nn.Module):
-	'''
-	rnn language model implement
-	<<Recurrent neural network based language model>>
+    def __init__(self,Config):
+        super(RNNLMModel,self).__init__()
+        self.embedding_dim = Config['lang_model_embed_dim']
+        self.hidden_dim = Config['lang_model_hidden_dim']
+        self.voc_size = Config['lang_model_voc_size']
+        self.use_bidirectional = Config['use_bidirectional']
+        self.layers = Config['rnn_lang_model_layers']
+        self.batch_size = Config['batch_size']
+        self.embed_layer = nn.Embedding(self.voc_size,self.embedding_dim)
+        self.gru = nn.GRU(self.embedding_dim,self.hidden_dim,num_layers=self.layers,bidirectional=self.use_bidirectional)
+        self.projection = nn.Linear(self.embedding_dim,self.voc_size)
+        self.softmax = nn.Softmax(dim=-1)
 
-	'''
-	def __init__(self,Config):
-		super(RNNLMModel,self).__init__()
-		self.embedding_dim = Config['lang_model_embed_dim']
-		self.hidden_dim = Config['lang_model_hidden_dim']
-		self.voc_size = Config['lang_model_voc_size']
-		self.embed_layer = nn.Embedding(self.voc_size,self.embedding_dim)
-		self.gru = nn.GRU(self.embedding_dim,self.hidden_dim,layer=2)
-		self.projection = nn.Linear(self.embedding_dim,self.voc_size)
-		self.softmax = nn.Softmax(dim=-1)
+    def forward(self,x,hidden):
+        x = self.embed_layer(x)
+        x = x.unsqueeze(0)
+        x,hidden = self.gru(x,hidden)
+        x = x[:, :, self.hidden_dim:].transpose(0,1)
+        x = self.projection(x)
+        x = self.softmax(x)
+        return x,hidden
+    def init_hidden(self):
+        b = 2 if self.use_bidirectional else 1
+        return torch.zeros(b*self.layers,self.batch_size,self.hidden_dim)
 
-	def forward(self,x,hidden):
-		x = self.embed_layer(x)
-		x,hidden = self.gru(x,hidden)
-		x = self.projection(x)
-		x = self.softmax(x)
-		return x,hidden
-	def get_score(self,x):
-		pass
+    def get_score(self,x,use_batch=False,mask=None):
+        if use_batch and mask is None:
+            raise ValueError("in use batch mode mask needed")
+
+        batch = x.shape[0] if use_batch else 1
+        l = x.shape[1]
+        b = 2 if self.use_bidirectional else 1
+        hidden = torch.zeros(b*self.layers,batch,self.hidden_dim)
+        score = torch.zeros(batch)
+        with torch.no_grad():
+            for i in range(l-1):
+                x_step = x[:,i]
+                out,hidden = self.forward(x_step,hidden)
+                out = out.squeeze()
+                idx = x[:,i+1].squeeze()
+                tmp_score = torch.log(out[torch.arange(batch),idx])
+                score += tmp_score
+        return score
+
 def main():
     model = AttnEncoderDecoder(Config)
     from data_util import load_data_into_parallel,PaddedTensorLanguageDataset
@@ -168,12 +189,15 @@ def main():
     reversed_train_dataset = PaddedTensorLanguageDataset(src_trg_pair_langs,reversed=True)
     reversed_train_dataloader = DataLoader(reversed_train_dataset,sampler=sampler,batch_size=16)
     model.init_weights()
+    rnn_lm_model = RNNLMModel(Config)
     for batch in train_dataloader:
         input_seq,output_seq,input_mask,output_mask = batch
-        hidden = model.init_hidden()
-        ouput,hidden = model(output_seq[:,0],input_seq,hidden,input_mask,first_step=True)
-        for i in range(1,Config['max_len']-1):
-            output,hidden = model(output_seq[:,i],input_seq,hidden,input_mask)
-            print(output.shape)
+        # hidden = model.init_hidden()
+        # ouput,hidden = model(output_seq[:,0],input_seq,hidden,input_mask,first_step=True)
+        # for i in range(1,Config['max_len']-1):
+        #     output,hidden = model(output_seq[:,i],input_seq,hidden,input_mask)
+        #     print(output.shape)
+        score = rnn_lm_model.get_score(input_seq,use_batch=True)
+        print(score)
 if __name__ == "__main__":
     main()
