@@ -3,10 +3,11 @@ from torch import nn,optim
 import torch
 import time
 import logging
+import os
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader,Dataset,ConcatDataset
-from models import AttnEncoderDecoder
+from models import AttnEncoderDecoder,RNNLMModel
 from model_util import beam_search
 from model_util import fluent_score
 from data_util import RandomSubsetSampler,RandomIndicesSubsetSampler
@@ -15,18 +16,16 @@ from torch.utils.data import RandomSampler
 from torch.utils.data import DataLoader
 from fairseq.data import  Dictionary
 from config import Config
+from collections import defaultdict
 logger = logging.getLogger(__name__)
 device = torch.device('gpu') if torch.cuda.is_available() and Config['use_cuda'] else torch.device('cpu')
 
 class BaseTrainner(object):
-	"""
-	"""
+	
 	def __init__(self,config):
 		self.__dict__.update(config)
 		self.writer = SummaryWriter('../summary')
-	"""common method in all trainner, all trainner that
-	inherit from the basetrainner must implement it
-	"""
+		
 	def train(self):
 		raise NotImplementedError()
 
@@ -69,7 +68,6 @@ class BaseTrainner(object):
 				chpt_model_name = time.strftime("%y-%m-%d-%H:%M:%S",time.localtime()) + "-%dbt.model"%batch_num
 				self.save_checkpoint(model,file_dir)
 			self.writer.add_scalar('loss', loss.item(), this_iter_num)
-			print("-----passed----- ")
 	def load_checkpoint(self,file_dir):
 
 		if not os.path.exist(file_dir):
@@ -145,42 +143,113 @@ class BackBoostTrainner(BaseTrainner):
 
 
 class SelfBoostTrainner(BaseTrainner):
-
+	"""self-boost learing implementation,only training
+	single correction model, during traning, dynamically
+	expand the data"""
 	def __init__(self,model,dataset,config):
 		super(NaiveTrainner,self).__init__()
-		self.model = model
-		self.dataset = dataset
 		self.__dict__.update(config)
+		self.correction_model = model
+		self.original_set = dataset
+		self.original_indexs = list(range(len(dataset)))
+		self.optimzier = optim.Adam(model.parameters(),lr=self.learning_rate)
+		self.selfset_dict = defaultdict(list)
+		
+	def train(self,criterion):
+		self.criterion = criterion
+		expansion_dataset = self.original_dataset
+		for epoch in tqdm(range(self.epochs)):
+			logger.info("start training in epoch %d" % epoch)
+			self.update_parameters_step(self.correction_model,self.optimzier,expansion_dataset,cur_epoch=epoch)
+			choosed_idxs = RandomIndicesSubsetSampler(self.original_indexs,subset_size=0.8)
+			foo = [()]
+			for idx in choosed_idxs:
+				raw_sentence,mask,correction_sentence,cor_mask = self.original_set[idx]
+				raw_sentence = raw_sentence[mask==1]
+				correction_sentence = correction_sentence[cor_mask==1]
+				candidate_correction = beam_search(self.correction_model,raw_sentence,self.bos)
+				tmp_self_set = [fluent_score(correction_sentence) / (1e-6+fluent_score(sen)) >= self.sigma
+				                for sen in correction_sentence]
+				self.selfset_dict[idx] += tmp_self_set
+				if self.selfset_dict[idx]:
+					generation_raw_sentence = random.choice(self.selfset_dict[idx])
+					foo += [()]
+			data = Dataset(foo)
+			expansion_dataset = ConcatDataset((data,self.original_set))
+		logger.info("finished training on whole epoch %d" % self.epochs)
 
-	def train(self):
-		pass
-
+		
 class DualBoostTrainner(BaseTrainner):
 
 	def __init__(self,model,dataset,config):
 		super(NaiveTrainner,self).__init__()
 		self.model = model
 		self.dataset = dataset
+		self.criterion = nn.CrossEntropyLoss(reduction='none')
 		self.__dict__.update(config)
-
+		
 	def train(self):
 		pass
 
 
+class LMTrainner():
+	def __init__(self,model,dataset,config):
+		self.model = model
+		self.dataset = dataset
+		self.__dict__.update(config)
+		self.optimizer = optim.Adam(model.parameters(),lr=self.learning_rate)
+		self.criterion = nn.CrossEntropyLoss(reduction='none')
+		#the summary write dir,variety by the time at train model
+		self.writer = SummaryWriter("../summary/lm/" + time.strftime("%Y-%m-%d@%H:%M:%S",time.localtime()))
+		self.model_save_to_dir = "../output_models/lm/" + time.strftime("%Y-%m-%d@%H:%M:%S",time.localtime())
+	def train(self,epochs):
+		self.epochs = epochs
+		sampler = RandomSampler(self.dataset)
+		dataloader = DataLoader(self.dataset,sampler=sampler,batch_size=self.batch_size)
+		for epoch in tqdm(range(self.epochs)):
+			logger.info('start training model on %d epoch'%epoch)
+			self.update_parameters_step(dataloader,epoch)
+		logger.info('finished training on whole %d epoch' % self.epochs)
+		
+	def update_parameters_step(self,dataloader,cur_epcoch,every_batch_to_save=6):
+		batch_num = len(dataloader)
+		for i,batch in tqdm(enumerate(dataloader)):
+			cur_batch = batch_num * cur_epcoch + i
+			self.optimizer.zero_grad()
+			sentence,_,mask = batch[1:]
+			hidden = self.model.init_hidden()
+			loss = 0.0
+			for i in range(int(sentence.shape[0])):
+				output,hidden = self.model(sentence[:,i],hidden)
+				output,tmp_mask = output.squeeze(), mask[:,i+1].squeeze()
+				target = sentence[:,i+1].squeeze()
+				tmp_loss = self.criterion(output,target)
+				tmp_loss = tmp_loss * tmp_mask
+				loss += torch.sum(tmp_loss)
+			loss.backward()
+			logger.info('current loss is %.2f'%loss.item())
+			self.optimizer.step()
+			if (cur_batch + 1) % every_batch_to_save == 0:
+				self.writer.add_scalar('loss',loss.item(),cur_batch)
+				self.save_checkpoint(self.model,"-epoch%d-batch%d.model"%(cur_epcoch,i))
+			logger.info("finished %d batch in %d epoch" % (i,cur_batch))
+		logger.info('finished training on epoch %d'%cur_batch)
+		
+	def save_checkpoint(self,model,file_dir):
+		
+		if not os.path.exists(self.model_save_to_dir):
+			os.makedirs(self.model_save_to_dir)
+		file_dir = os.path.join(self.model_save_to_dir,file_dir)
+		torch.save(model,file_dir)
+		logger.info('save model into %s '%file_dir)
+		
 def main():
-	correction_model = AttnEncoderDecoder(Config)
-	generation_model = AttnEncoderDecoder(Config)
+	lm_model = RNNLMModel(Config)
 	src_file = '../data/nucle/nucle-train.tok.src'
 	trg_file = '../data/nucle/nucle-train.tok.trg'
 	src_trg_pair_langs = load_data_into_parallel(src_file, trg_file)
 	train_dataset = PaddedTensorLanguageDataset(src_trg_pair_langs)
-	sampler = RandomSampler(train_dataset)
-	train_dataloader = DataLoader(train_dataset, sampler=sampler, batch_size=16)
-	reversed_train_dataset = PaddedTensorLanguageDataset(src_trg_pair_langs, reversed=True)
-	reversed_train_dataloader = DataLoader(reversed_train_dataset, sampler=sampler, batch_size=16)
-	correction_model.init_weights()
-	criterion = nn.CrossEntropyLoss(reduction="none")
-	trainner = BackBoostTrainner(correction_model,train_dataset,Config)
-	trainner.train(criterion)
+	lm_trainner = LMTrainner(lm_model,train_dataset,Config)
+	lm_trainner.train(5)
 if __name__ == "__main__":
 	main()

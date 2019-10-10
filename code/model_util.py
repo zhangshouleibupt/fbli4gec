@@ -37,6 +37,7 @@ def beam_search(model,input_seqs,sos,beam_size=10):
 			all_condidate_seqs[i].append(index)
 	all_seqs = [torch.tensor(each_seq) for each_seq in all_condidate_seqs]
 	return all_seqs
+
 from torch.utils.data import Sampler
 
 class RandomSubsetSampler(Sampler):

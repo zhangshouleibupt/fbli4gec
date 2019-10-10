@@ -130,6 +130,7 @@ class AttnEncoderDecoder(nn.Module):
                 init_fn(p.data)
 
 class RNNLMModel(nn.Module):
+    
     def __init__(self,Config):
         super(RNNLMModel,self).__init__()
         self.embedding_dim = Config['lang_model_embed_dim']

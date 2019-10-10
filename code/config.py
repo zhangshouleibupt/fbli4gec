@@ -12,7 +12,7 @@ Config = {
 	'decoder_rnn_layer_size' : 2,
 	'learning_rate' : 0.1 * 0.001,
 	'epochs' : 40,
-	'batch_size' : 16,
+	'batch_size' : 4,
 	'dropput_prop' : 0.15,
 	'use_batch_norm' : False,
 	'use_seq_norm' : False,
