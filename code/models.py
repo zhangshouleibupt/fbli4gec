@@ -8,7 +8,6 @@ from functools import partial
 logger = logging.getLogger(__name__)
 from config import Config
 device = torch.device('gpu') if torch.cuda.is_available() and Config['use_cuda'] else torch.device('cpu')
-
 class Encoder(nn.Module):
 
 	def __init__(self,Config):

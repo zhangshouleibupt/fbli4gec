@@ -10,7 +10,7 @@ Config = {
 	'decoder_hidden_dim' : 500,
 	'encoder_rnn_layer_size' : 2,
 	'decoder_rnn_layer_size' : 2,
-	'learing_rate' : 0.1 * 0.001,
+	'learning_rate' : 0.1 * 0.001,
 	'epochs' : 40,
 	'batch_size' : 16,
 	'dropput_prop' : 0.15,

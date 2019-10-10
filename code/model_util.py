@@ -1,11 +1,11 @@
 import torch
 import numpy as np
-#ToDo lack of the shallow fusion
 from models import RNNLMModel
-from config import config
+from config import Config
 
 #return the conditonal score that calculate
 #P(x_i | x_(< i))
+#ToDo lack of the shallow fusion
 
 def get_score(sentence,rnn_lm_model):
 	return rnn_lm_model.get_score(sentence)

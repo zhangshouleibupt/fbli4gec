@@ -10,9 +10,13 @@ from models import AttnEncoderDecoder
 from model_util import beam_search
 from model_util import fluent_score
 from data_util import RandomSubsetSampler,RandomIndicesSubsetSampler
-from data_util import PaddedTensorLanguageDataset
+from data_util import load_data_into_parallel, PaddedTensorLanguageDataset
+from torch.utils.data import RandomSampler
+from torch.utils.data import DataLoader
+from fairseq.data import  Dictionary
 from config import Config
 logger = logging.getLogger(__name__)
+device = torch.device('gpu') if torch.cuda.is_available() and Config['use_cuda'] else torch.device('cpu')
 
 class BaseTrainner(object):
 	"""
@@ -38,33 +42,34 @@ class BaseTrainner(object):
 		sampler = RandomSampler(dataset)
 		train_dataloader = DataLoader(dataset,sampler=sampler,batch_size=self.batch_size)
 		for batch_num,batch in tqdm(enumerate(train_dataloader)):
+
 			optimizer.zero_grad()
 			logger.info('start training on the %d batch' % batch_num)
 			hidden = model.init_hidden()
-			input_seqs,input_mask,output_seqs,output_mask = batch
-			output,hidden = model(output_seqs[0],input_seqs,hidden,input_mask,first_step=True)
-			loss = self.criterion(output,output[1])
-			loss = loss * output_mask[1]
+			input_seqs,output_seqs,input_mask,output_mask = batch
+			loss = torch.zeros_like(output_seqs[:,0].squeeze(),dtype=torch.float)
+			output,hidden = model(output_seqs[:,0],input_seqs,hidden,input_mask,first_step=True)
+			prediction,target = output.squeeze(),output_seqs[:,1].squeeze()
+			tmp_loss = self.criterion(prediction,target)
+			tmp_loss = tmp_loss * output_mask[:,1].squeeze()
+			loss += tmp_loss
+			for i in range(1,self.max_len-1):
+				optimizer.zero_grad()
+				output,hidden = model(output_seqs[:,i],input_seqs,hidden,input_mask)
+				prediction,target = output.squeeze(),output_seqs[:,i+1].squeeze()
+				tmp_loss = self.criterion(prediction, target)
+				tmp_loss = tmp_loss * output_mask[:, 1].squeeze()
+				loss += tmp_loss
+			this_iter_num = cur_epoch * batch_num
 			loss = torch.sum(loss)
 			loss.backward()
 			optimizer.step()
-			for i in range(1,self.max_len-1):
-				optimizer.zero_grad()
-				input_seqs,input_mask,output_seqs,output_mask = batch
-				output,hidden = model(output_seqs[i],input_seqs,hidden,input_mask)
-				prediction,target = output.squeeze(),output_seqs[:,i+1].squeeze()
-				loss = self.criterion(prediction,target)
-				loss = loss * output_mask[i+1]
-				loss = torch.sum(loss)
-				loss.backward()
-				optimizer.step()
-				this_iter_num = cur_epoch * batch_num + i
-				self.writer.add_scalar('loss',loss.item(),this_iter_num)
 			#save the check point
 			if (batch_num + 1) % every_batch_to_save == 0:
 				chpt_model_name = time.strftime("%y-%m-%d-%H:%M:%S",time.localtime()) + "-%dbt.model"%batch_num
 				self.save_checkpoint(model,file_dir)
-
+			self.writer.add_scalar('loss', loss.item(), this_iter_num)
+			print("-----passed----- ")
 	def load_checkpoint(self,file_dir):
 
 		if not os.path.exist(file_dir):
@@ -83,26 +88,27 @@ class BackBoostTrainner(BaseTrainner):
 	some error-right pair, which(reversed pair) will be added into the
 	training set for training our correction model
 	"""
-	def __init__(self,model,dataset,config,
+	def __init__(self,correction_model,dataset,config,
 		reversed_parallel_dataset=None,generation_model=None):
 		super(BaseTrainner,self).__init__()
+		self.__dict__.update(config)
 		self.correction_model = correction_model
 		self.generation_model = generation_model
 		self.dataset = dataset
 		self.reversed_parallel_dataset = reversed_parallel_dataset
-		self.correction_model_optimizer = optim.Adam(self.correction_model.parameters(),lr=self.lr)
-		self.generation_model_optimizer = optim.Adam(self.generation_model.parameters(),lr=self.lr)
+		self.correction_model_optimizer = optim.Adam(self.correction_model.parameters(),lr=self.learning_rate)
+		#self.generation_model_optimizer = optim.Adam(self.generation_model.parameters(),lr=self.learning_rate)
 		self.config = config
-		self.__dict__.update(config)
-		self.dictionary = dictionary
-		self.bos = torch.tensor(self.dictionary.bos(),dtype=torch.int64,device=self.device)
+		self.dictionary = Dictionary().load(Config['word_dict'])
+		self.bos = torch.tensor(self.dictionary.bos(),dtype=torch.int64,device=device)
 		self.writer = SummaryWriter('../summary')
 		
 	def train(self,criterion):
 		#train a model that could generate the basic error
 		#sentence that used for the latter step
+		self.criterion = criterion
 		for epoch in tqdm(range(self.epochs)):
-			self.update_parameters_step(self.generation_model, self.generation_model_optimizer,self.reversed_parallel_dataset,cur_epoch=epoch)
+			#self.update_parameters_step(self.generation_model, self.generation_model_optimizer,self.reversed_parallel_dataset,cur_epoch=epoch)
 			logger.info('have finised the %d epoch  on training generation model' % epoch)
 			#back_boost_disfluent_dataset = self.generate_back_boost_set(self.generation_model)
 			#concat_dataset = (self.dataset,back_boost_disfluent_dataset)
@@ -164,18 +170,17 @@ class DualBoostTrainner(BaseTrainner):
 def main():
 	correction_model = AttnEncoderDecoder(Config)
 	generation_model = AttnEncoderDecoder(Config)
-	from data_util import load_data_into_parallel, PaddedTensorLanguageDataset
 	src_file = '../data/nucle/nucle-train.tok.src'
 	trg_file = '../data/nucle/nucle-train.tok.trg'
 	src_trg_pair_langs = load_data_into_parallel(src_file, trg_file)
 	train_dataset = PaddedTensorLanguageDataset(src_trg_pair_langs)
-	from torch.utils.data import RandomSampler
-	from torch.utils.data import DataLoader
 	sampler = RandomSampler(train_dataset)
 	train_dataloader = DataLoader(train_dataset, sampler=sampler, batch_size=16)
 	reversed_train_dataset = PaddedTensorLanguageDataset(src_trg_pair_langs, reversed=True)
 	reversed_train_dataloader = DataLoader(reversed_train_dataset, sampler=sampler, batch_size=16)
-	model.init_weights()
-	criterion = nn.CrossEntropyLoss()
+	correction_model.init_weights()
+	criterion = nn.CrossEntropyLoss(reduction="none")
 	trainner = BackBoostTrainner(correction_model,train_dataset,Config)
 	trainner.train(criterion)
+if __name__ == "__main__":
+	main()
