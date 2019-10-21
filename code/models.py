@@ -6,13 +6,10 @@ import torch.nn.init as init
 import logging
 from functools import partial
 logger = logging.getLogger(__name__)
-from config import Config
-device = torch.device('gpu') if torch.cuda.is_available() and Config['use_cuda'] else torch.device('cpu')
 class Encoder(nn.Module):
-
-	def __init__(self,Config):
+	def __init__(self,config):
 		super(Encoder,self).__init__()
-		self.__dict__.update(Config)
+		self.__dict__.update(config)
 		self.embedding = nn.Embedding(self.input_voc_size, self.embedding_dim)
 		self.dropout = nn.Dropout(self.dropout_prob)
 		self.encoder_rnn_layer = nn.GRU(self.embedding_dim,self.encoder_hidden_dim,
@@ -27,7 +24,7 @@ class Encoder(nn.Module):
 	def init_hidden(self):
 		b = self.batch_size
 		num = 2 if self.use_bidirectional else 1
-		return torch.zeros(num*self.encoder_rnn_layer_size,b,self.encoder_hidden_dim,device=device)
+		return torch.zeros(num*self.encoder_rnn_layer_size,b,self.encoder_hidden_dim)
 
 class Attention(nn.Module):
     """
@@ -63,12 +60,12 @@ class Attention(nn.Module):
 
 class AttnEncoderDecoder(nn.Module):
 
-    def __init__(self,Config):
+    def __init__(self,config):
         super(AttnEncoderDecoder,self).__init__()
-        self.__dict__.update(Config)
+        self.__dict__.update(config)
         self.embedding = nn.Embedding(self.output_voc_size, self.embedding_dim)
         self.dropout = nn.Dropout(self.dropout_prob)
-        self.encoder = Encoder(Config)
+        self.encoder = Encoder(config)
         self.rnn_type_map = {
             'rnn': nn.RNN,
             'gru': nn.GRU,
@@ -111,7 +108,7 @@ class AttnEncoderDecoder(nn.Module):
     def init_hidden(self):
         b = self.batch_size
         num = 2 if self.use_bidirectional else 1
-        return torch.zeros(num*self.encoder_rnn_layer_size,b,self.encoder_hidden_dim,device=device)
+        return torch.zeros(num*self.encoder_rnn_layer_size,b,self.encoder_hidden_dim)
 
     def init_weights(self):
         #simple init method just init all parameters
@@ -131,14 +128,14 @@ class AttnEncoderDecoder(nn.Module):
 
 class RNNLMModel(nn.Module):
     
-    def __init__(self,Config):
+    def __init__(self,config):
         super(RNNLMModel,self).__init__()
-        self.embedding_dim = Config['lang_model_embed_dim']
-        self.hidden_dim = Config['lang_model_hidden_dim']
-        self.voc_size = Config['lang_model_voc_size']
-        self.use_bidirectional = Config['use_bidirectional']
-        self.layers = Config['rnn_lang_model_layers']
-        self.batch_size = Config['batch_size']
+        self.embedding_dim = config['lang_model_embed_dim']
+        self.hidden_dim = config['lang_model_hidden_dim']
+        self.voc_size = config['lang_model_voc_size']
+        self.use_bidirectional = config['use_bidirectional']
+        self.layers = config['rnn_lang_model_layers']
+        self.batch_size = config['batch_size']
         self.embed_layer = nn.Embedding(self.voc_size,self.embedding_dim)
         self.gru = nn.GRU(self.embedding_dim,self.hidden_dim,num_layers=self.layers,bidirectional=self.use_bidirectional)
         self.projection = nn.Linear(self.embedding_dim,self.voc_size)
@@ -150,7 +147,6 @@ class RNNLMModel(nn.Module):
         x,hidden = self.gru(x,hidden)
         x = x[:, :, self.hidden_dim:].transpose(0,1)
         x = self.projection(x)
-        x = self.softmax(x)
         return x,hidden
     def init_hidden(self):
         b = 2 if self.use_bidirectional else 1
@@ -171,12 +167,12 @@ class RNNLMModel(nn.Module):
                 out,hidden = self.forward(x_step,hidden)
                 out = out.squeeze()
                 idx = x[:,i+1].squeeze()
-                tmp_score = torch.log(out[torch.arange(batch),idx])
+                tmp_score = torch.log(out[torch.arange(batch),idx]) * mask[:,i+1]
                 score += tmp_score
         return score
 
 def main():
-    model = AttnEncoderDecoder(Config)
+    model = AttnEncoderDecoder(config)
     from data_util import load_data_into_parallel,PaddedTensorLanguageDataset
     src_file = '../data/nucle/nucle-train.tok.src'
     trg_file = '../data/nucle/nucle-train.tok.trg'
@@ -189,12 +185,12 @@ def main():
     reversed_train_dataset = PaddedTensorLanguageDataset(src_trg_pair_langs,reversed=True)
     reversed_train_dataloader = DataLoader(reversed_train_dataset,sampler=sampler,batch_size=16)
     model.init_weights()
-    rnn_lm_model = RNNLMModel(Config)
+    rnn_lm_model = RNNLMModel(config)
     for batch in train_dataloader:
         input_seq,output_seq,input_mask,output_mask = batch
         # hidden = model.init_hidden()
         # ouput,hidden = model(output_seq[:,0],input_seq,hidden,input_mask,first_step=True)
-        # for i in range(1,Config['max_len']-1):
+        # for i in range(1,config['max_len']-1):
         #     output,hidden = model(output_seq[:,i],input_seq,hidden,input_mask)
         #     print(output.shape)
         score = rnn_lm_model.get_score(input_seq,use_batch=True)

@@ -5,9 +5,6 @@ import torch
 import  sys
 import  os
 from torch.utils.data import dataset
-from fairseq.data import  Dictionary
-from config import Config
-logger = logging.getLogger(__name__)
 
 def read_token_lines_from_file(file):
     with open(file,'r',encoding='utf8') as f:
@@ -63,9 +60,9 @@ def load_data_into_parallel(src_file,trg_file):
 class PaddedTensorLanguageDataset(dataset.Dataset):
 
     r"""create the indexed format for the retraing stage
-        return format: (padded_src_tensor,padded_trg_tensor,pad_mask)
+        return format: (padded_src_tensor,padded_trg_tensor,src_mask,trg_mask)
     """
-    def __init__(self,langs_pairs,reversed=False):
+    def __init__(self,langs_pairs,dictionary,reversed=False,max_len = 128,pad_left=False,used_for_lm_model=False):
         super(PaddedTensorLanguageDataset,self).__init__()
         self.langs_pairs = langs_pairs
         self.src_langs,self.trg_langs = list(zip(*self.langs_pairs))
@@ -73,10 +70,10 @@ class PaddedTensorLanguageDataset(dataset.Dataset):
         # pair format,we need reverse the pairs
         if reversed:
             self.src_langs,self.trg_langs = self.trg_langs,self.src_langs
-        self.dictionary = Dictionary().load(Config['word_dict'])
-        self.max_len = Config['max_len']
-        self.pad_left = Config['pad_left']
-
+        self.dictionary = dictionary
+        self.max_len = max_len
+        self.pad_left = pad_left
+        self.used_for_lm_model = used_for_lm_model
     def __getitem__(self,index):
         src,trg = self.src_langs[index],self.trg_langs[index]
         return self._pad_one_pair(src,trg)
@@ -88,20 +85,21 @@ class PaddedTensorLanguageDataset(dataset.Dataset):
         return self.pad_left
 
     def _pad_one_pair(self,src,trg):
-
-        if len(src) > self.max_len - 1:
-            src = src[:self.max_len - 1]
-        if len(trg) > self.max_len - 1:
-            trg = trg[:self.max_len - 1]
+        src = src[:self.max_len - 1]
+        trg = trg[:self.max_len - 1] if not self.used_for_lm_model else trg[:self.max_len - 2]
         #cuase we add [bos] and [eos] seperately in source
         #and target,so the length needed to be add 1
-        src_len, trg_len = len(src) + 1, len(trg) + 1
+        src_len = len(src) + 1
+        trg_len = len(trg) + 1 if not self.used_for_lm_model else len(trg) + 2
         src_need_padded_len = self.max_len - src_len
         trg_need_padded_len = self.max_len - trg_len
         src_idxs = [self.dictionary.index(token) for token in src]
         trg_idxs = [self.dictionary.index(token) for token in trg]
         src_idxs = src_idxs + [self.dictionary.eos()]
-        trg_idxs = [self.dictionary.bos()] + trg_idxs
+        if not self.used_for_lm_model:
+            trg_idxs = [self.dictionary.bos()] + trg_idxs
+        else:
+            trg_idxs = [self.dictionary.bos()] + trg_idxs + [self.dictionary.eos()]
         #source padded left condition
         if self.pad_left:
             src_idxs = [self.dictionary.pad()] * src_need_padded_len + src_idxs
